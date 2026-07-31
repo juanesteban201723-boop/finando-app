@@ -13,7 +13,22 @@
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <div style="font-family: sans-serif; padding: 24px; color: #666;">Cargando Finando App…</div>
+</div>
+<div id="error-box" style="display:none; font-family: monospace; white-space: pre-wrap; background:#FEE2E2; color:#7F1D1D; padding:16px; margin:16px; border-radius:8px; font-size:13px;"></div>
+<script>
+  function showError(msg) {
+    var box = document.getElementById('error-box');
+    if (box) { box.style.display = 'block'; box.textContent += msg + '\n\n'; }
+  }
+  window.addEventListener('error', function (e) {
+    showError('Error: ' + (e.message || e) + (e.filename ? (' @ ' + e.filename + ':' + e.lineno) : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    showError('Promesa rechazada: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+  });
+</script>
 
 <!-- React -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -41,6 +56,7 @@
 </script>
 
 <script type="text/babel" data-presets="react">
+try {
 const { useState, useEffect, useMemo } = React;
 
 // ---- Iconos livianos (sin dependencias externas) ----
@@ -1189,7 +1205,17 @@ function App() {
 }
 
 
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+try {
+  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+} catch (e) {
+  document.getElementById('root').innerHTML = '';
+  showError('Fallo al iniciar la app: ' + e.message);
+}
+
+} catch (topLevelError) {
+  document.getElementById('root').innerHTML = '';
+  showError('Error real detectado:\n' + (topLevelError && topLevelError.stack ? topLevelError.stack : topLevelError));
+}
 
 </script>
 </body>
