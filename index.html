@@ -157,7 +157,14 @@ function BalanceChart({ data }) {
 }
 
 
-const RATE = 0.2; // 20% - de 100 mil se devuelven 120 mil
+const RATE = 0.2; // 20% mensual - de 100 mil se devuelven 120 mil por cada mes de plazo
+
+// Multiplicador total del préstamo según su plazo: 4 semanas = 1 mes = 20%, 8 semanas = 2 meses = 40%, etc.
+function loanMultiplier(loan) {
+  const weeks = loan.weeks || WEEKS;
+  const months = weeks / 4;
+  return 1 + RATE * months;
+}
 const WEEKS = 4;
 const MS_DAY = 86400000;
 
@@ -198,7 +205,7 @@ function firstDueDate(loanDateStr) {
 function dueSchedule(loan) {
   const weeks = loan.weeks || WEEKS;
   const first = firstDueDate(loan.date);
-  const quota = (loan.amount * (1 + RATE)) / weeks;
+  const quota = (loan.amount * loanMultiplier(loan)) / weeks;
   const dates = [];
   for (let i = 0; i < weeks; i++) {
     const dd = new Date(first);
@@ -220,6 +227,7 @@ function useStorage() {
     }
   });
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
+  const [saveError, setSaveError] = useState('');
   const reconciled = useRef(false);
 
   useEffect(() => {
@@ -272,21 +280,22 @@ function useStorage() {
     } catch (e) {
       console.error('No se pudo guardar en la nube (queda respaldado en el celular y se reintentará)', e);
       setSaveStatus('error');
+      setSaveError((e && e.code ? e.code + ': ' : '') + (e && e.message ? e.message : String(e)));
     }
   };
 
-  return [clients, save, saveStatus];
+  return [clients, save, saveStatus, saveError];
 }
 
 function computeBalance(client) {
-  const prestado = client.loans.reduce((s, l) => s + l.amount * (1 + RATE), 0);
+  const prestado = client.loans.reduce((s, l) => s + l.amount * loanMultiplier(l), 0);
   const abonado = client.payments.reduce((s, p) => s + p.amount, 0);
   return prestado - abonado;
 }
 
 function computeTimeline(client) {
   const events = [
-    ...client.loans.map((l) => ({ date: l.date, delta: l.amount * (1 + RATE), type: "loan" })),
+    ...client.loans.map((l) => ({ date: l.date, delta: l.amount * loanMultiplier(l), type: "loan" })),
     ...client.payments.map((p) => ({ date: p.date, delta: -p.amount, type: "payment" })),
   ].sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -552,7 +561,7 @@ function ClientReport({ client, onClose }) {
                 </td>
                 <td className="py-2 text-[#9187AC]">{l.weeks || WEEKS} sem</td>
                 <td className="py-2 text-right text-[#241B3D]">{fmt(l.amount)}</td>
-                <td className="py-2 text-right font-medium text-[#241B3D]">{fmt(l.amount * (1 + RATE))}</td>
+                <td className="py-2 text-right font-medium text-[#241B3D]">{fmt(l.amount * loanMultiplier(l))}</td>
               </tr>
             ))}
             {loansSorted.length === 0 && (
@@ -804,7 +813,7 @@ function ClientDetail({ client, onBack, onUpdate }) {
                   </div>
                 </div>
                 <div className={"font-semibold " + (m.kind === "loan" ? "text-[#F59E0B]" : m.kind === "condonacion" ? "text-[#7C3AED]" : "text-[#10B981]")}>
-                  {m.kind === "loan" ? "+" + fmt(m.amount * (1 + RATE)) : "-" + fmt(m.amount)}
+                  {m.kind === "loan" ? "+" + fmt(m.amount * loanMultiplier(m)) : "-" + fmt(m.amount)}
                 </div>
               </div>
             ))}
@@ -1099,7 +1108,7 @@ function ClientCard({ client, onClick }) {
 }
 
 function App() {
-  const [clients, saveClients, saveStatus] = useStorage();
+  const [clients, saveClients, saveStatus, saveError] = useStorage();
   const [selected, setSelected] = useState(null);
   const [modal, setModal] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -1252,8 +1261,9 @@ function App() {
         </div>
       )}
       {saveStatus === "error" && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#DC2626] text-white text-sm px-4 py-2.5 rounded-full shadow-lg z-50 flex items-center gap-2">
-          ⚠️ No se pudo guardar — revisa tu conexión y espera antes de cerrar
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#DC2626] text-white text-xs px-4 py-2.5 rounded-2xl shadow-lg z-50 max-w-[90%] text-center">
+          ⚠️ No se pudo guardar en la nube (queda a salvo en este celular)
+          {saveError && <div className="mt-1 opacity-80 font-mono">{saveError}</div>}
         </div>
       )}
     </div>
