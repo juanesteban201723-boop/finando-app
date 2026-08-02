@@ -60,7 +60,7 @@
 
 <script type="text/babel" data-presets="react">
 try {
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 // ---- Iconos livianos (sin dependencias externas) ----
 function Icon({ children, size = 16, color, style }) {
@@ -208,21 +208,50 @@ function dueSchedule(loan) {
   return { quota, dates };
 }
 
+const LOCAL_BACKUP_KEY = 'finando_backup_v1';
+
 function useStorage() {
-  const [clients, setClients] = useState(null);
+  const [clients, setClients] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
+  const reconciled = useRef(false);
 
   useEffect(() => {
     const ref = db.collection('finando').doc('clients');
     const unsub = ref.onSnapshot(
       (snap) => {
-        if (snap.exists) {
-          setClients(snap.data().list || []);
-        } else {
-          setClients([]);
+        const cloudList = snap.exists ? snap.data().list || [] : [];
+
+        // Al primer dato que llega de la nube: si en este celular hay un respaldo local
+        // que no coincide (por ejemplo, un cambio que nunca se alcanzó a guardar),
+        // lo volvemos a intentar subir en vez de perderlo.
+        if (!reconciled.current) {
+          reconciled.current = true;
+          let localBackup = null;
+          try {
+            const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+            localBackup = raw ? JSON.parse(raw) : null;
+          } catch (e) {}
+          if (localBackup && JSON.stringify(localBackup) !== JSON.stringify(cloudList)) {
+            setClients(localBackup);
+            ref.set({ list: localBackup }).catch((e) => console.error('No se pudo recuperar el respaldo local', e));
+            return;
+          }
         }
+
+        setClients(cloudList);
+        try {
+          localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(cloudList));
+        } catch (e) {}
       },
       (err) => {
-        console.error('Error leyendo datos', err);
+        console.error('Error leyendo datos de la nube, se usa el respaldo local si existe', err);
         setClients((prev) => prev ?? []);
       }
     );
@@ -231,14 +260,22 @@ function useStorage() {
 
   const save = async (next) => {
     setClients(next);
+    // Respaldo local INMEDIATO: aunque se cierre la app antes de que termine de subir a la nube, esto ya quedó guardado en el celular.
+    try {
+      localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(next));
+    } catch (e) {}
+    setSaveStatus('saving');
     try {
       await db.collection('finando').doc('clients').set({ list: next });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
     } catch (e) {
-      console.error('No se pudo guardar (se sincronizará cuando vuelva la conexión)', e);
+      console.error('No se pudo guardar en la nube (queda respaldado en el celular y se reintentará)', e);
+      setSaveStatus('error');
     }
   };
 
-  return [clients, save];
+  return [clients, save, saveStatus];
 }
 
 function computeBalance(client) {
@@ -1062,7 +1099,7 @@ function ClientCard({ client, onClick }) {
 }
 
 function App() {
-  const [clients, saveClients] = useStorage();
+  const [clients, saveClients, saveStatus] = useStorage();
   const [selected, setSelected] = useState(null);
   const [modal, setModal] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -1202,6 +1239,22 @@ function App() {
           onCancel={() => setModal(false)}
           onSubmit={addClient}
         />
+      )}
+
+      {saveStatus === "saving" && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#241B3D] text-white text-sm px-4 py-2 rounded-full shadow-lg z-50">
+          Guardando…
+        </div>
+      )}
+      {saveStatus === "saved" && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#10B981] text-white text-sm px-4 py-2 rounded-full shadow-lg z-50">
+          ✓ Guardado
+        </div>
+      )}
+      {saveStatus === "error" && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#DC2626] text-white text-sm px-4 py-2.5 rounded-full shadow-lg z-50 flex items-center gap-2">
+          ⚠️ No se pudo guardar — revisa tu conexión y espera antes de cerrar
+        </div>
       )}
     </div>
   );
